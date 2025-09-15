@@ -1,11 +1,9 @@
-{-# LANGUAGE InstanceSigs #-}
-
 module Constants (keywords, symbol, precedence, Operator (..)) where
 
 keywords :: [String]
 keywords = ["in", "let", "fun", "if", "then", "else"]
 
-data Operator = Plus | Minus | Mul | Div
+data Operator = Plus | Minus | Mul | Div deriving (Eq)
 
 symbol :: Operator -> String
 symbol Plus = "+"

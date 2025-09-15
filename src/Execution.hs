@@ -2,15 +2,17 @@
 
 module Execution (test) where
 
+import Constants (Operator (..))
 import Control.Monad (when)
 import Control.Monad.State
+import Data.List (intercalate)
 import Data.Map (Map, delete, empty, insert, lookup)
-import qualified Data.Maybe as Maybe
-import qualified GHC.Base as Control.Monad
 
-data Term = Abs Int | App Int Int | UnboundVar Int deriving (Eq, Show)
+data Term = Abs Int | App Int Int | UnboundVar Int | Number Int | Op Operator | Tuple [Int] | Ith Int
+  deriving (Eq, Show)
 
-data ExTerm = ExAbs ExTerm | ExVar Int | ExApp ExTerm ExTerm
+data ExTerm = ExAbs ExTerm | ExVar Int | ExApp ExTerm ExTerm | ExNumber Int | ExOp Operator | ExTuple [ExTerm] | ExIth Int
+  deriving (Eq, Show)
 
 data ExecutionState = ES {cache :: Map Int (Int, Term), idx :: Int} deriving (Show)
 
@@ -35,10 +37,10 @@ delTerm i = do
   put $ ES (Data.Map.delete i (cache es)) (idx es)
   case t of
     Abs a -> decRc a
-    UnboundVar _ -> return ()
     App a b -> do
       decRc a
       decRc b
+    _ -> return ()
 
 showTerm :: Int -> State ExecutionState String
 showTerm i = do
@@ -52,6 +54,13 @@ showTerm i = do
       as <- showTerm a
       bs <- showTerm b
       return $ "(" ++ as ++ ")(" ++ bs ++ ")"
+    Number n -> return $ show n
+    Op o -> return $ show o
+    Tuple xs -> do
+      xss <- mapM showTerm xs
+      return $ "[" ++ intercalate ", " xss ++ "]"
+    Ith idx -> do
+      return $ "|" ++ show idx ++ "|"
 
 getRc :: Int -> State ExecutionState Int
 getRc i = do
@@ -117,64 +126,170 @@ load (ExApp a b) vars = do
   i <- newTerm $ App a' b'
   incRc i
   return i
+load (ExNumber n) _ = do
+  i <- newTerm $ Number n
+  incRc i
+  return i
+load (ExOp o) _ = do
+  i <- newTerm $ Op o
+  incRc i
+  return i
+load (ExTuple xs) vars = do
+  xs' <- mapM (`load` vars) xs
+  i <- newTerm $ Tuple xs'
+  incRc i
+  return i
+load (ExIth idx) _ = do
+  i <- newTerm $ Ith idx
+  incRc i
+  return i
 
-reduceTerm' :: Int -> State ExecutionState Int
+-- dupTerm :: Int -> Int -> State ExecutionState ()
+-- dupTerm from to = do
+--   fromT <- getTerm from
+--   case fromT of
+--     Abs a -> do
+--       incRc a
+--     App a b -> do
+--       incRc a
+--       incRc b
+--     _ -> return ()
+--   toT <- getTerm to
+--   case toT of
+--     Abs a -> do
+--       decRc a
+--     App a b -> do
+--       decRc a
+--       decRc b
+--     _ -> return ()
+--   setTerm to fromT
+
+reduceTerm' :: Int -> State ExecutionState (Bool, Int)
 reduceTerm' i = do
   t <- getTerm i
   case t of
-    Abs _ -> return i
-    UnboundVar _ -> return i
+    Abs _ -> return (False, i)
+    UnboundVar _ -> return (False, i)
     App a b -> do
-      b' <- reduceTerm' b
-      if b' /= b
+      (reducedB, b') <- reduceTerm' b
+      if reducedB
         then do
           incRc a
           incRc b'
-          newTerm $ App a b'
+          result <- newTerm $ App a b'
+          return (True, result)
         else do
           at <- getTerm a
           case at of
             Abs inner -> do
               rc <- getRc a
-              if rc == 1
-                then
-                  replaceVarInPlace a b inner
+              varExists <- varExistsInTerm a inner
+              if not varExists
+                then do
+                  return (True, inner)
                 else
-                  replaceVar a b inner
+                  if rc == 1
+                    then do
+                      result <- replaceVarInPlace a b inner
+                      return (True, result)
+                    else do
+                      result <- replaceVar a b inner
+                      return (True, result)
+            Ith idx -> do
+              bt <- getTerm b
+              case bt of
+                Tuple xs -> do
+                  if idx < length xs
+                    then do
+                      let chosen = xs !! idx
+                      return (True, chosen)
+                    else return (False, i)
+                _ -> do
+                  (reducedA, a') <- reduceTerm' a
+                  if not reducedA
+                    then return (False, i)
+                    else do
+                      incRc a'
+                      incRc b
+                      result <- newTerm $ App a' b
+                      return (True, result)
+            App c d -> do
+              -- ((c d) b)
+              ct <- getTerm c
+              dt <- getTerm d
+              bt <- getTerm b
+              case (ct, dt, bt) of
+                (Op op, Number n1, Number n2) -> case op of
+                  Plus -> do
+                    result <- newTerm $ Number (n1 + n2)
+                    return (True, result)
+                  Minus -> do
+                    result <- newTerm $ Number (n1 - n2)
+                    return (True, result)
+                  Mul -> do
+                    result <- newTerm $ Number (n1 * n2)
+                    return (True, result)
+                  Div -> do
+                    result <- newTerm $ Number (n1 `div` n2)
+                    return (True, result)
+                _ -> do
+                  (reducedA, a') <- reduceTerm' a
+                  if not reducedA
+                    then return (False, i)
+                    else do
+                      incRc a'
+                      incRc b
+                      result <- newTerm $ App a' b
+                      return (True, result)
             _ -> do
-              a' <- reduceTerm' a
-              if a' == a
-                then return i
+              (reducedA, a') <- reduceTerm' a
+              if not reducedA
+                then return (False, i)
                 else do
                   incRc a'
                   incRc b
-                  newTerm $ App a' b
+                  result <- newTerm $ App a' b
+                  return (True, result)
+    _ -> return (False, i)
 
-reduceTerm :: Int -> State ExecutionState Int
+reduceTerm :: Int -> State ExecutionState (Bool, Int)
 reduceTerm i = do
-  i' <- reduceTerm' i
+  (reduced, i') <- reduceTerm' i
   incRc i'
   decRc i
-  return i'
+  return (reduced, i')
+
+varExistsInTerm :: Int -> Int -> State ExecutionState Bool
+varExistsInTerm v inTerm = do
+  t <- getTerm inTerm
+  case t of
+    Abs a -> varExistsInTerm v a
+    App a b -> do
+      a' <- varExistsInTerm v a
+      b' <- varExistsInTerm v b
+      return $ a' || b'
+    Tuple xs -> do
+      ress <- mapM (varExistsInTerm v) xs
+      return $ or ress
+    UnboundVar i -> return $ i == v
+    _ -> return False
 
 replaceVar :: Int -> Int -> Int -> State ExecutionState Int
 replaceVar from to inTerm = do
   t <- getTerm inTerm
   case t of
     Abs i -> do
-      i' <- replaceVar from to i
-      let t' = Abs i'
-      if t == t'
+      varExists <- varExistsInTerm inTerm i
+      if not varExists
         then return inTerm
         else do
           tmp <- newTerm $ Abs 0
           var <- newTerm $ UnboundVar tmp
-          i'' <- replaceVar inTerm var i
-          i''' <- replaceVar from to i''
-          setTerm tmp $ Abs i'''
-          incRc i'''
+          i' <- replaceVar inTerm var i
+          i'' <- replaceVar from to i'
+          setTerm tmp $ Abs i''
+          incRc i''
           dropIfUnreferenced i'
-          dropIfUnreferenced i''
           return tmp
     App a b -> do
       a' <- replaceVar from to a
@@ -186,12 +301,20 @@ replaceVar from to inTerm = do
           incRc a'
           incRc b'
           newTerm t'
+    Tuple xs -> do
+      ress <- mapM (replaceVar from to) xs
+      if Tuple ress == t
+        then return inTerm
+        else do
+          mapM_ incRc ress
+          newTerm $ Tuple ress
     UnboundVar i -> do
       if i == from
         then do
           return to
         else
           return inTerm
+    _ -> return inTerm
 
 replaceVarInPlace :: Int -> Int -> Int -> State ExecutionState Int
 replaceVarInPlace from to inTerm = do
@@ -212,17 +335,24 @@ replaceVarInPlace from to inTerm = do
       decRc b
       setTerm inTerm $ App a' b'
       return inTerm
+    Tuple xs -> do
+      ress <- mapM (replaceVarInPlace from to) xs
+      mapM_ incRc ress
+      mapM_ decRc xs
+      setTerm inTerm $ Tuple ress
+      return inTerm
     UnboundVar i -> do
       if i == from
         then do
           return to
         else
           return inTerm
+    _ -> return inTerm
 
 reduceWithCount :: Int -> State ExecutionState (Int, Int)
 reduceWithCount i = do
-  i' <- reduceTerm i
-  if i' == i
+  (reduced, i') <- reduceTerm i
+  if not reduced
     then
       return (i, 0)
     else do
@@ -231,20 +361,18 @@ reduceWithCount i = do
 
 test :: (String, ExecutionState)
 test =
-  let two = ExAbs $ ExAbs (ExApp (ExVar 1) (ExApp (ExVar 1) (ExApp (ExVar 1) (ExVar 0))))
-   in let expensive = ExApp (ExAbs $ ExApp (ExApp (ExApp (ExVar 0) (ExVar 0)) (ExVar (-1))) (ExVar (-2))) two
-       in let suspended = ExAbs expensive
-           in let twoExpensive = ExApp (ExAbs $ ExApp (ExApp (ExAbs (ExAbs (ExVar 0))) (ExApp (ExVar 0) (ExVar 0))) (ExApp (ExVar 0) (ExVar 0))) suspended
-               in let state = ES Data.Map.empty 0
-                   in runState
-                        ( do
-                            i <- load twoExpensive []
-                            i <- reduceTerm i
-                            i <- reduceTerm i
-                            -- (i', steps) <- reduceWithCount i
-                            text <- showTerm i
-                            return text
-                        )
-                        -- \$ show steps ++ " " ++ text
+  let addTwo = ExAbs $ ExTuple [ExNumber 2, ExVar 0]
+   in let two = ExAbs $ ExAbs (ExApp (ExVar 1) (ExApp (ExVar 1) (ExApp (ExVar 1) (ExVar 0))))
+       in let expensive = ExApp (ExIth 7) (two `ExApp` addTwo `ExApp` ExNumber 1)
+           in --      in let suspended = ExAbs expensive
+              --          in let twoExpensive = ExApp (ExAbs $ ExApp (ExApp (ExAbs (ExAbs (ExVar 0))) (ExApp (ExVar 0) (ExVar 0))) (ExApp (ExVar 0) (ExVar 0))) suspended
+              let state = ES Data.Map.empty 0
+               in runState
+                    ( do
+                        i <- load expensive []
 
-                        state
+                        (i', steps) <- reduceWithCount i
+                        text <- showTerm i'
+                        return $ show steps ++ " " ++ text
+                    )
+                    state
