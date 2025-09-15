@@ -1,4 +1,4 @@
-module AST (refine) where
+module AST (refine, Expr (..), Pattern (..)) where
 
 import Constants (Operator, precedence)
 import Data.List (intercalate)

@@ -1,5 +1,3 @@
-{-# LANGUAGE EmptyCase #-}
-
 module Execution (test) where
 
 import Constants (Operator (..))

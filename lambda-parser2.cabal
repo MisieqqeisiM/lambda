@@ -28,7 +28,7 @@ library
       AST
       Constants
       Execution
-      ExecutionFast
+      ExTerm
       Lambda
       Lib
       Parser
