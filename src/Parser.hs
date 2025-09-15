@@ -6,6 +6,7 @@ import Constants
 import Control.Monad
 import Data.Char (isAlphaNum, isSpace)
 import Data.Functor
+import Data.List (dropWhileEnd)
 import Data.Maybe (listToMaybe)
 import GHC.OldList (intercalate)
 import Prelude hiding ((+))
@@ -263,5 +264,8 @@ expr = do
     AppE [x] -> return x
     _ -> return e
 
+trim :: String -> String
+trim = dropWhileEnd isSpace . dropWhile isSpace
+
 parse :: String -> Maybe ExprE
-parse s = listToMaybe [x | (x, rest) <- run expr s, null rest]
+parse s = listToMaybe [x | (x, rest) <- run expr (trim s), null rest]

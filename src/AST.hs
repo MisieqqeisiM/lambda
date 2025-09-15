@@ -3,6 +3,7 @@ module AST (refine, Expr (..), Pattern (..)) where
 import Constants (Operator, precedence)
 import Data.List (intercalate)
 import Parser
+import Text.Read (readMaybe)
 
 data Pattern
   = TuplePattern [Pattern]
@@ -32,7 +33,7 @@ instance Show Expr where
   show (Var v) = v
   show (NumVal n) = show n
   show (BoolVal b) = show b
-  show (Let p v e) = "let " ++ show p ++ " = " ++ show v ++ " " ++ show e
+  show (Let p v e) = "let " ++ show p ++ " = " ++ show v ++ " in " ++ show e
   show (IfThenElse i t e) = "if " ++ show i ++ " then " ++ show t ++ " else " ++ show e
   show (Fun ps e) = "fun " ++ unwords (map show ps) ++ " => " ++ show e
   show (Tuple es) = "[" ++ intercalate ", " (map show es) ++ "]"
@@ -61,6 +62,12 @@ refine (AppE []) = error "Empty application is illegal"
 refine (LetE p v e) = Let (refinePattern p) (refine v) (refine e)
 refine (IfThenElseE i t e) = IfThenElse (refine i) (refine t) (refine e)
 refine (FunE ps e) = Fun (map refinePattern ps) (refine e)
-refine (VarE v) = Var v
+refine (VarE v) =
+  case v of
+    "true" -> BoolVal True
+    "false" -> BoolVal False
+    _ -> case readMaybe v :: Maybe Int of
+      Just n -> NumVal n
+      Nothing -> Var v
 refine (TupleE es) = Tuple (map refine es)
 refine (ParenthesizedE e) = refine e

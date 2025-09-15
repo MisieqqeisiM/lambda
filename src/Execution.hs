@@ -1,15 +1,13 @@
-module Execution (test) where
+module Execution (run) where
 
 import Constants (Operator (..))
 import Control.Monad (when)
 import Control.Monad.State
 import Data.List (intercalate)
 import Data.Map (Map, delete, empty, insert, lookup)
+import ExTerm (ExTerm (..))
 
 data Term = Abs Int | App Int Int | UnboundVar Int | Number Int | Op Operator | Tuple [Int] | Ith Int
-  deriving (Eq, Show)
-
-data ExTerm = ExAbs ExTerm | ExVar Int | ExApp ExTerm ExTerm | ExNumber Int | ExOp Operator | ExTuple [ExTerm] | ExIth Int
   deriving (Eq, Show)
 
 data ExecutionState = ES {cache :: Map Int (Int, Term), idx :: Int} deriving (Show)
@@ -357,20 +355,30 @@ reduceWithCount i = do
       (tree, steps) <- reduceWithCount i'
       return (tree, steps + 1)
 
-test :: (String, ExecutionState)
-test =
-  let addTwo = ExAbs $ ExTuple [ExNumber 2, ExVar 0]
-   in let two = ExAbs $ ExAbs (ExApp (ExVar 1) (ExApp (ExVar 1) (ExApp (ExVar 1) (ExVar 0))))
-       in let expensive = ExApp (ExIth 7) (two `ExApp` addTwo `ExApp` ExNumber 1)
-           in --      in let suspended = ExAbs expensive
-              --          in let twoExpensive = ExApp (ExAbs $ ExApp (ExApp (ExAbs (ExAbs (ExVar 0))) (ExApp (ExVar 0) (ExVar 0))) (ExApp (ExVar 0) (ExVar 0))) suspended
-              let state = ES Data.Map.empty 0
-               in runState
-                    ( do
-                        i <- load expensive []
+run' :: ExTerm -> State ExecutionState ExTerm
+run' term = do
+  i <- load term []
+  (i', steps) <- reduceWithCount i
+  download i'
 
-                        (i', steps) <- reduceWithCount i
-                        text <- showTerm i'
-                        return $ show steps ++ " " ++ text
-                    )
-                    state
+run :: ExTerm -> ExTerm
+run term = evalState (run' term) (ES empty 0)
+
+download :: Int -> State ExecutionState ExTerm
+download i = do
+  t <- getTerm i
+  case t of
+    Abs a -> do
+      a' <- download a
+      return $ ExAbs a'
+    UnboundVar v -> return $ ExVar v
+    App a b -> do
+      a' <- download a
+      b' <- download b
+      return $ ExApp a' b'
+    Number n -> return $ ExNumber n
+    Op o -> return $ ExOp o
+    Tuple xs -> do
+      xs' <- mapM download xs
+      return $ ExTuple xs'
+    Ith idx -> return $ ExIth idx

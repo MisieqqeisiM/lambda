@@ -22,7 +22,7 @@ getVar v = do
       Just idx -> return $ ExVar (-1 - idx)
       Nothing -> do
         put $ CS (v : unbound) bound
-        return $ ExVar (-length unbound)
+        return $ ExVar (-1 - length unbound)
 
 bindVar :: String -> StateT CompilationState Identity ()
 bindVar v = do
@@ -48,7 +48,11 @@ getBindings (VarPattern name) chain =
 getBindings Wildcard _ = empty
 
 withArgs :: [ExTerm] -> ExTerm -> ExTerm
-withArgs as body = foldl (ExApp . ExAbs) body as
+withArgs [] body = body
+withArgs (a : as) body =
+  ExApp (withArgs as (ExAbs body)) a
+
+-- withArgs as body = foldl (ExApp . ExAbs) body as
 
 compile' :: Expr -> StateT CompilationState Identity ExTerm
 compile' (App e1 e2) = do
@@ -77,10 +81,12 @@ compile' (Fun [VarPattern name] e) = do
   return $ ExAbs inner
 compile' (Fun [p] e) = do
   let bindings = toList $ getBindings p []
-  mapM_ (bindVar . fst) bindings
+  bindVar "" -- for the original function argument
+  mapM_ (bindVar . fst) (reverse bindings)
   inner <- compile' e
   forM_ bindings (const unbindVar)
-  return $ withArgs (snd <$> bindings) inner
+  unbindVar
+  return $ ExAbs $ withArgs (snd <$> bindings) inner
 compile' (Fun (p : ps) e) = compile' $ Fun [p] (Fun ps e)
 compile' (Tuple es) = do
   es' <- mapM compile' es
